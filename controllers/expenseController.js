@@ -39,6 +39,19 @@ function simplifyDebts(balances) {
 }
 
 //
+// Helper: safe emitter (no-op if io not present)
+//
+function emitToRoom(req, room, eventName, payload) {
+  try {
+    const io = req.app && req.app.locals && req.app.locals.io;
+    if (!io) return;
+    io.to(room.toString()).emit(eventName, payload);
+  } catch (err) {
+    console.error('Socket emit error', err.message);
+  }
+}
+
+//
 // ➕ Add Expense
 //
 exports.addExpense = async (req, res) => {
@@ -81,6 +94,16 @@ exports.addExpense = async (req, res) => {
       .populate('paidBy', 'name email')
       .populate('splitBetween', 'name email');
 
+    // push to group's expenses array (optional)
+    try {
+      await Group.findByIdAndUpdate(group, { $push: { expenses: expense._id } });
+    } catch (e) {
+      console.error('Failed to push expense ref to group:', e.message);
+    }
+
+    // EMIT: notify group members of new expense
+    emitToRoom(req, group, 'expense:new', populatedExpense);
+
     res.status(201).json(populatedExpense);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -109,6 +132,50 @@ exports.getExpenses = async (req, res) => {
       .populate('splitBetween', 'name email');
 
     res.json(expenses);
+  } catch (error) {
+    res.status(500).json({ message: error.message });
+  }
+};
+
+//
+// 📊 Get raw balances (no simplification)
+//
+exports.getBalances = async (req, res) => {
+  try {
+    const { groupId } = req.params;
+
+    const group = await Group.findById(groupId).populate('members', 'name email');
+    if (!group) return res.status(404).json({ message: 'Group not found' });
+
+    if (!group.members.some(m => m._id.toString() === req.user._id.toString())) {
+      return res.status(403).json({ message: 'Not authorized to view balances of this group' });
+    }
+
+    const expenses = await Expense.find({ group: groupId })
+      .populate('paidBy', 'name email')
+      .populate('splitBetween', 'name email');
+
+    const balances = {};
+    const userMap = {};
+
+    expenses.forEach(expense => {
+      const splitAmount = expense.amount / expense.splitBetween.length;
+      balances[expense.paidBy._id] = (balances[expense.paidBy._id] || 0) + expense.amount;
+      userMap[expense.paidBy._id] = expense.paidBy.name;
+
+      expense.splitBetween.forEach(user => {
+        balances[user._id] = (balances[user._id] || 0) - splitAmount;
+        userMap[user._id] = user.name;
+      });
+    });
+
+    const summary = Object.entries(balances).map(([userId, balance]) => ({
+      userId,
+      userName: userMap[userId],
+      balance: Number(balance.toFixed(2)),
+    }));
+
+    res.json({ summary });
   } catch (error) {
     res.status(500).json({ message: error.message });
   }
@@ -170,6 +237,9 @@ exports.settleExpenses = async (req, res) => {
       amount: t.amount,
     }));
 
+    // EMIT: settlement requested/updated (optional, useful for realtime UIs)
+    emitToRoom(req, groupId, 'expense:settlement', { summary, transactions });
+
     res.json({ summary, transactions });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -222,6 +292,9 @@ exports.updateExpense = async (req, res) => {
       .populate('paidBy', 'name email')
       .populate('splitBetween', 'name email');
 
+    // EMIT: notify group members of updated expense
+    emitToRoom(req, expense.group, 'expense:update', populatedExpense);
+
     res.json(populatedExpense);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -246,6 +319,16 @@ exports.deleteExpense = async (req, res) => {
     }
 
     await expense.deleteOne();
+
+    // Optionally remove ref from group
+    try {
+      await Group.findByIdAndUpdate(expense.group, { $pull: { expenses: expense._id } });
+    } catch (e) {
+      console.error('Failed to remove expense ref from group:', e.message);
+    }
+
+    // EMIT: notify group members of deleted expense
+    emitToRoom(req, expense.group, 'expense:delete', { expenseId: expense._id.toString() });
 
     res.json({ message: 'Expense deleted successfully' });
   } catch (error) {

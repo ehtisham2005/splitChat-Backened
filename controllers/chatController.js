@@ -14,6 +14,20 @@ async function ensureMember(groupId, userId) {
 }
 
 /**
+ * Helper to emit socket events safely if io is available
+ */
+function emitToRoom(req, room, eventName, payload) {
+  try {
+    const io = req.app && req.app.locals && req.app.locals.io;
+    if (!io) return;
+    io.to(room.toString()).emit(eventName, payload);
+  } catch (err) {
+    // don't block the request if emit fails; just log
+    console.error('Socket emit error', err.message);
+  }
+}
+
+/**
  * GET /api/chats/:groupId?page=&limit=
  * List messages for a group (newest first by default)
  */
@@ -70,13 +84,21 @@ exports.createChat = async (req, res) => {
       message,
     });
 
-    // (optional) also push to group's chats array if you keep refs there
-    await Group.findByIdAndUpdate(groupId, { $push: { chats: chat._id } });
+    // push to group's chats array if you keep refs there (optional)
+    try {
+      await Group.findByIdAndUpdate(groupId, { $push: { chats: chat._id } });
+    } catch (e) {
+      // non-fatal — log and continue
+      console.error('Failed to push chat ref to group:', e.message);
+    }
 
     const populated = await chat.populate([
       { path: 'sender', select: 'name email' },
       { path: 'group',  select: 'name' },
     ]);
+
+    // emit to room (group) so connected clients receive realtime update
+    emitToRoom(req, groupId, 'chat:new', populated);
 
     res.status(201).json(populated);
   } catch (error) {
@@ -110,6 +132,10 @@ exports.updateChat = async (req, res) => {
     await chat.save();
 
     const populated = await chat.populate('sender', 'name email');
+
+    // emit update to the room
+    emitToRoom(req, chat.group, 'chat:update', populated);
+
     res.json(populated);
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -139,7 +165,14 @@ exports.deleteChat = async (req, res) => {
     await chat.deleteOne();
 
     // (optional) also pull from group's chats array if you keep refs there
-    await Group.findByIdAndUpdate(chat.group, { $pull: { chats: chat._id } });
+    try {
+      await Group.findByIdAndUpdate(chat.group, { $pull: { chats: chat._id } });
+    } catch (e) {
+      console.error('Failed to remove chat ref from group:', e.message);
+    }
+
+    // emit delete to room
+    emitToRoom(req, chat.group, 'chat:delete', { chatId: chat._id.toString() });
 
     res.json({ message: 'Chat deleted successfully' });
   } catch (error) {
