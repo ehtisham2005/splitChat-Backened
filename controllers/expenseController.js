@@ -1,9 +1,7 @@
 const Expense = require('../models/Expense');
 const Group = require('../models/Group');
 
-//
-// ✅ Debt Simplification Helper
-//
+
 function simplifyDebts(balances) {
   let debtors = [];
   let creditors = [];
@@ -38,9 +36,7 @@ function simplifyDebts(balances) {
   return transactions;
 }
 
-//
-// Helper: safe emitter (no-op if io not present)
-//
+
 function emitToRoom(req, room, eventName, payload) {
   try {
     const io = req.app && req.app.locals && req.app.locals.io;
@@ -51,9 +47,7 @@ function emitToRoom(req, room, eventName, payload) {
   }
 }
 
-//
-// ➕ Add Expense
-//
+
 exports.addExpense = async (req, res) => {
   try {
     const { description, amount, paidBy, group, splitBetween } = req.body;
@@ -110,9 +104,7 @@ exports.addExpense = async (req, res) => {
   }
 };
 
-//
-// 📖 Get all expenses for a group
-//
+
 exports.getExpenses = async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -137,9 +129,7 @@ exports.getExpenses = async (req, res) => {
   }
 };
 
-//
-// 📊 Get raw balances (no simplification)
-//
+
 exports.getBalances = async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -181,9 +171,7 @@ exports.getBalances = async (req, res) => {
   }
 };
 
-//
-// ✅ Settle Expenses with Debt Simplification
-//
+
 exports.settleExpenses = async (req, res) => {
   try {
     const { groupId } = req.params;
@@ -246,9 +234,7 @@ exports.settleExpenses = async (req, res) => {
   }
 };
 
-//
-// ✏️ Update Expense
-//
+
 exports.updateExpense = async (req, res) => {
   try {
     const { expenseId } = req.params;
@@ -280,7 +266,7 @@ exports.updateExpense = async (req, res) => {
       }
     }
 
-    // Apply updates
+    
     if (description) expense.description = description;
     if (amount) expense.amount = amount;
     if (paidBy) expense.paidBy = paidBy;
@@ -301,9 +287,7 @@ exports.updateExpense = async (req, res) => {
   }
 };
 
-//
-// ❌ Delete Expense
-//
+
 exports.deleteExpense = async (req, res) => {
   try {
     const { expenseId } = req.params;
